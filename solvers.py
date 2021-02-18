@@ -13,7 +13,6 @@ import contextlib
 import tsne
 import numpy as np
 import itertools
-from apex import amp
 
 @contextlib.contextmanager
 def _disable_tracking_bn_stats(model):

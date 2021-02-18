@@ -5,7 +5,6 @@ from PIL import ImageFilter
 import numpy as np
 import random, torch
 from copy import deepcopy
-from augmix import augment_and_mix
 import math
 
 def image_train(resize_size=256, crop_size=224):
