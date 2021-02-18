@@ -4,6 +4,8 @@ import torch.nn as nn
 from torch.nn import Parameter
 from torchvision import models
 import torch.nn.functional as F
+from apex import amp
+amp.register_float_function(torch, 'sigmoid')
 
 def calc_coeff(iter_num, high=1.0, low=0.0, alpha=10.0, max_iter=10000.0):
     return np.float(2.0 * (high - low) / (1.0 + np.exp(-alpha*iter_num / max_iter)) - (high - low) + low)
@@ -48,6 +50,7 @@ class ResNet(nn.Module):
         if self.use_bottleneck:
             self.bottleneck = nn.Linear(model_resnet.fc.in_features, bottleneck_dim)
             self.fc = SLR_layer(bottleneck_dim, class_num)
+            # self.fc = nn.Linear(bottleneck_dim, class_num)
             self.bottleneck.apply(init_weights)
             self.__in_features = bottleneck_dim
         else:
@@ -59,7 +62,7 @@ class ResNet(nn.Module):
         self.__in_features = model_resnet.fc.in_features
     self.radius=radius
 
-  def forward(self, x,label=None,weight=None):
+  def forward(self, x):
     x = self.feature_layers(x)
     x = x.view(x.size(0), -1)
     if self.use_bottleneck and self.new_cls:
@@ -92,6 +95,9 @@ class AdversarialNetwork(nn.Module):
     self.ad_layer1 = SP_layer(in_feature,hidden_size+1,self.radius)
     self.ad_layer2 = SP_layer(hidden_size+1,hidden_size+1,self.radius)
     self.ad_layer3 = SLR_layer(hidden_size+1,1)
+    # self.ad_layer1 = nn.Linear(in_feature,hidden_size)
+    # self.ad_layer2 = nn.Linear(hidden_size,hidden_size)
+    # self.ad_layer3 = nn.Linear(hidden_size,1)
     self.sigmoid=nn.Sigmoid()
     self.iter_num = 0
     self.alpha = 10
