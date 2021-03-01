@@ -78,49 +78,46 @@ def mosaic_aug(img, num_patch_1, num_patch_2, fix_p):
                 #     patch = patch[:, ::-1, :]
                 img[index_w_1:index_w_1+patch_size, index_h_1:index_h_1+patch_size, :] = patch
 
-def mosaic_aug_v2(img, num_patch_1, num_patch_2, fix_p, p=0.5):
-    if num_patch_1 != 1: 
-        temp = deepcopy(img)
-        n = num_patch_1
-        index1 = np.random.permutation(n)
-        index2 = np.random.permutation(n)
-        for i in range(n):
-            for j in range(n):
-                img[i::n, j::n, :] = temp[index1[i]::n, index2[j]::n, :]
+def mosaic_aug_v2(img, num_patch, p=0.5):
+    # if num_patch_1 != 1: 
+    #     temp = deepcopy(img)
+    #     n = num_patch_1
+    #     index1 = np.random.permutation(n)
+    #     index2 = np.random.permutation(n)
+    #     for i in range(n):
+    #         for j in range(n):
+    #             img[i::n, j::n, :] = temp[index1[i]::n, index2[j]::n, :]
 
-    if num_patch_2 != 1:
-        temp = deepcopy(img)
+    # if num_patch_2 != 1:
+    temp = deepcopy(img)
 
-        patch_size = 224 // num_patch_2
-        num = num_patch_2//fix_p
-        patch_size *= fix_p
-        # index1 = np.random.permutation(n//fix_p)
-        # index2 = np.random.permutation(n//fix_p)
+    patch_size = 224 // num_patch
+    # index1 = np.random.permutation(n//fix_p)
+    # index2 = np.random.permutation(n//fix_p)
 
-        # extra_i, extra_j = random.choices([0, 1], k=2)
-        if num_patch_2 % fix_p != 0:
-            extra_i, extra_j = random.choices([i for i in range(math.ceil(num_patch_2/fix_p))], k=2)
-            extra_size = patch_size // fix_p
-        else:
-            extra_i = extra_j = 0
-            extra_size = 0
-        
-        for i in range(num):
-            for j in range(num):
-                if random.random() < p:
-                    continue
-                index_w_1 = patch_size*i if i < extra_i else patch_size*i+extra_size
-                index_h_1 = patch_size*j if j < extra_j else patch_size*j+extra_size
+    # extra_i, extra_j = random.choices([0, 1], k=2)
+    extra_size = 224 % num_patch
+    if 224 % num_patch != 0:
+        extra_i, extra_j = random.choices([i for i in range(num_patch)], k=2)
+    else:
+        extra_i = extra_j = 0
 
-                # index_w_2 = patch_size*index1[i] if index1[i] < extra_i else patch_size*index1[i]+extra_size
-                # index_h_2 = patch_size*index2[j] if index2[j] < extra_j else patch_size*index2[j]+extra_size
-                index1 = np.random.randint(0, num)
-                index2 = np.random.randint(0, num)
-                index_w_2 = patch_size*index1 if index1 < extra_i else patch_size*index1+extra_size
-                index_h_2 = patch_size*index2 if index2 < extra_j else patch_size*index2+extra_size
-                patch = temp[index_w_2:index_w_2+patch_size, index_h_2:index_h_2+patch_size, :]
+    for i in range(num_patch):
+        for j in range(num_patch):
+            if random.random() < p:
+                continue
+            index_w_1 = patch_size*i if i < extra_i else patch_size*i+extra_size
+            index_h_1 = patch_size*j if j < extra_j else patch_size*j+extra_size
 
-                img[index_w_1:index_w_1+patch_size, index_h_1:index_h_1+patch_size, :] = patch
+            # index_w_2 = patch_size*index1[i] if index1[i] < extra_i else patch_size*index1[i]+extra_size
+            # index_h_2 = patch_size*index2[j] if index2[j] < extra_j else patch_size*index2[j]+extra_size
+            index1 = np.random.randint(0, num_patch)
+            index2 = np.random.randint(0, num_patch)
+            index_w_2 = patch_size*index1 if index1 < extra_i else patch_size*index1+extra_size
+            index_h_2 = patch_size*index2 if index2 < extra_j else patch_size*index2+extra_size
+            patch = temp[index_w_2:index_w_2+patch_size, index_h_2:index_h_2+patch_size, :]
+
+            img[index_w_1:index_w_1+patch_size, index_h_1:index_h_1+patch_size, :] = patch
 
 def mosaic_aug_v3(img, num_patch):
 
@@ -216,7 +213,7 @@ class ImageList(Dataset):
                 temp_img = np.concatenate((temp_img, mosaic_w), axis=0)
                 # [112 74 56 32]
                 # mosaic_aug_v2(mosaic_w, 1, self.num_patch_2, 74, p=0.0)
-                mosaic_aug_v2(mosaic_w, 1, self.num_patch_2, 74, p=0.)
+                mosaic_aug_v2(mosaic_w, self.num_patch_1, p=0.)
 
                 temp_img_ = np.concatenate((mosaic_w, mosaic_w), axis=0)
                 mosaic_w = self.transforms_2(mosaic_w)
@@ -227,7 +224,7 @@ class ImageList(Dataset):
                 temp_img = np.concatenate((temp_img, mosaic_s), axis=0)
 
                 # mosaic_aug_v2(mosaic_s, 1, self.num_patch_2, 56, p=0.)
-                mosaic_aug_v2(mosaic_s, 1, self.num_patch_2, 56, p=0.)
+                mosaic_aug_v2(mosaic_s, self.num_patch_2, p=0.)
 
                 temp_img_ = np.concatenate((temp_img_, mosaic_s), axis=0)
                 Image.fromarray(np.concatenate((temp_img, temp_img_), axis=1).astype('uint8')).convert('RGB').save('{}/test.jpg'.format(self.params.save_dir))

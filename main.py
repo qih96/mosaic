@@ -59,8 +59,10 @@ if __name__ == "__main__":
     parser.add_argument('--stages',type=int,default=0,help='the number of alternative iteration stages')
     parser.add_argument('--max_iter',type=int,default=5000)
     parser.add_argument('--batch_size',type=int,default=36)
-    parser.add_argument('--mosaic_1',type=int,default=1)
-    parser.add_argument('--mosaic_2',type=int,default=1)
+    parser.add_argument('--mosaic_1',type=int,default=2)
+    parser.add_argument('--mosaic_2',type=int,default=4)
+    parser.add_argument('--lambda_e',type=float,default=0.1)
+    parser.add_argument('--lambda_c',type=float,default=0.3)
     parser.add_argument('--log_file')
     args = parser.parse_args()
 

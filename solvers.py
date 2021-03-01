@@ -199,6 +199,8 @@ def train_init(args):
     Cs_memory = torch.zeros(args.num_class, 256).cuda()
     Ct_memory = torch.zeros(args.num_class, 256).cuda()
 
+    lambda_c = args.lambda_c
+    lambda_e = args.lambda_e
     max_batch = 100
     queue_size = args.batch_size * max_batch
     queue_data = [torch.zeros(queue_size, 256).cuda(), torch.zeros(queue_size, args.num_class).cuda()]
@@ -272,7 +274,7 @@ def train_init(args):
         loss_sm, Cs_memory, Ct_memory = utils.SM(features_source, features_target, labels_source, pseu_labels_target,
                                                 Cs_memory, Ct_memory)
         # total_loss = classifier_loss + adv_loss + lam*loss_sm + network.calc_coeff(max(i-300, 0), high=0.01)*H
-        total_loss = classifier_loss + adv_loss + lam*loss_sm + network.calc_coeff(max(i-300, 0), high=0.1)*H
+        total_loss = classifier_loss + adv_loss + lam*loss_sm + network.calc_coeff(max(i-300, 0), high=lambda_e)*H
         optimizer.zero_grad()
 
         total_loss.backward()
@@ -317,8 +319,8 @@ def train_init(args):
 
             mosaic_loss_target = (1.0*nt_cent(queue_data[1].detach(), F.softmax(mosaic_outputs_target_w, dim=1), queue_labels[1], 
                 pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False) +
-                                    1.0*nt_cent(queue_data_w[1].detach(), F.softmax(mosaic_outputs_target_s, dim=1), queue_labels[1], 
-                pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)) * (network.calc_coeff(max(i-max_batch, 0), high=0.3, low=0.01,
+                                    1.0*nt_cent(queue_data[1].detach(), F.softmax(mosaic_outputs_target_s, dim=1), queue_labels[1], 
+                pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)) * (network.calc_coeff(max(i-max_batch, 0), high=lambda_c, low=0.01,
                         max_iter=args.max_iter//5*2))
             # mosaic_loss_target = 0.6*(torch.mean(torch.sum(torch.abs(targets_u - F.softmax(mosaic_outputs_target_w, dim=1)), dim=1)) +\
             #                      torch.mean(torch.sum(torch.abs(F.softmax(mosaic_outputs_target_w, dim=1).detach() - F.softmax(mosaic_outputs_target_s, dim=1)), dim=1)))
@@ -353,7 +355,7 @@ def train_distill(teacher, args):
     dset_loaders["source"] = DataLoader(dsets["source"], batch_size=args.batch_size, \
                                         shuffle=True, num_workers=2, drop_last=True)
     dsets["target"] = ImageList(open(args.target_list).readlines(), \
-                                transform=image_train(), num_patch_1=args.mosaic_1, num_patch_2=args.mosaic_2)
+                                transform=image_train(),  params=args)
     dset_loaders["target"] = DataLoader(dsets["target"], batch_size=args.batch_size, \
                                         shuffle=True, num_workers=2, drop_last=True)
 
@@ -364,7 +366,7 @@ def train_distill(teacher, args):
 
     #model
     model = network.ResNet(class_num=args.num_class).cuda()
-    adv_net = network.AdversarialNetwork(in_feature=model.output_num(),hidden_size=1024).cuda()
+    adv_net = network.AdversarialNetwork(in_feature=model.output_num(),hidden_size=1024, max_iter=args.max_iter).cuda()
     parameter_list = model.get_parameters() + adv_net.get_parameters()
     optimizer = torch.optim.SGD(parameter_list,lr=args.lr,momentum=0.9,weight_decay=0.005)
     # model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
@@ -436,24 +438,32 @@ def train_distill(teacher, args):
         if i % len_train_target == 0:
             iter_target = iter(dset_loaders["target"])
         inputs_source, labels_source = iter_source.next()
-        inputs_target, inputs_target_mosaic_w, inputs_target_mosaic_s, labels_target = iter_target.next()
+        inputs_target, _, inputs_target_mosaic_w, inputs_target_mosaic_s, labels_target = iter_target.next()
         inputs_source, inputs_target, labels_source = inputs_source.cuda(), inputs_target.cuda(), labels_source.cuda()
         inputs_target_mosaic_w, inputs_target_mosaic_s =  inputs_target_mosaic_w.cuda(), inputs_target_mosaic_s.cuda()
-        # features_source, outputs_source = model(inputs_source)
+        features_source, outputs_source = model(inputs_source)
         features_target, outputs_target = model(inputs_target)
+        features = torch.cat((features_source, features_target), dim=0)
         with torch.no_grad():
             features_target_teacher, outputs_target_teacher = teacher(inputs_target)
 
-        # classifier_loss = nn.CrossEntropyLoss()(outputs_source, labels_source)
-        classifier_loss = 4*utils.cross_entropy_with_logits(outputs_target / 4.0, F.softmax(outputs_target_teacher / 4.0, dim=1))
+        adv_loss = utils.loss_adv(features,adv_net)
+
+        H = torch.mean(utils.Entropy(F.softmax(outputs_target, dim=1)))
 
         if args.baseline == 'MSTN':
             lam = network.calc_coeff(i)
         elif args.baseline =='DANN':
             lam = 0.0
         prob_max, pseu_labels_target = torch.max(F.softmax(outputs_target, dim=1), dim=1)
+        loss_sm, Cs_memory, Ct_memory = utils.SM(features_source, features_target, labels_source, pseu_labels_target,
+                                                Cs_memory, Ct_memory)
 
-        total_loss = classifier_loss 
+        # classifier_loss = nn.CrossEntropyLoss()(outputs_source, labels_source)
+        classifier_loss = 4*utils.cross_entropy_with_logits(outputs_target / 4.0, F.softmax(outputs_target_teacher / 4.0, dim=1)) + nn.CrossEntropyLoss()(outputs_source, labels_source)
+        total_loss = classifier_loss + lam * loss_sm + adv_loss + network.calc_coeff((i-100), high=0.1, max_iter=100)*H
+
+        prob_max, pseu_labels_target = torch.max(F.softmax(outputs_target, dim=1), dim=1)
     
         optimizer.zero_grad()
 
@@ -463,6 +473,10 @@ def train_distill(teacher, args):
 
         mosaic_loss_target = torch.zeros(1)
 
+        if i < args.max_iter // 5 * 2:
+            alpha = 0.0
+        else:
+            alpha = 0.5
         with _disable_tracking_bn_stats(model):
             mosaic_features_target_w, mosaic_outputs_target_w = model(inputs_target_mosaic_w)
             mosaic_features_target_s, mosaic_outputs_target_s = model(inputs_target_mosaic_s)
@@ -471,8 +485,10 @@ def train_distill(teacher, args):
                 features_list_w = [mosaic_features_target_w, F.softmax(mosaic_outputs_target_w, dim=1)]
 
                 features_target_, outputs_target_ = model(inputs_target)
-                prob_max, pseu_labels_target = torch.max(F.softmax(outputs_target_, dim=1), dim=1)
-                features_list = [features_target_, F.softmax(outputs_target_, dim=1)]
+                outputs_target = alpha * outputs_target_ + (1. - alpha) * outputs_target_teacher
+
+                prob_max, pseu_labels_target = torch.max(F.softmax(outputs_target, dim=1), dim=1)
+                features_list = [features_target_, F.softmax(outputs_target, dim=1)]
                 labels_list = [pseu_labels_target, pseu_labels_target]
 
                 utils.rightshift(queue_weight, args.batch_size)
@@ -484,18 +500,11 @@ def train_distill(teacher, args):
                 ptr = ((i+1) % max_batch) * args.batch_size
                 queue_ptr[0] = ptr
 
-            if i < 10000:
-                # mosaic_loss_target = nt_cent(queue_data[0].detach(), mosaic_features_target, queue_labels[0], 
-                #     pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)
-                # mosaic_loss_target = (nt_cent(queue_data[0].detach(), mosaic_features_target_w, queue_labels[0], 
-                #     pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False) +
-                #                      1.*nt_cent(queue_data_w[0].detach(), mosaic_features_target_s, queue_labels[0], 
-                #     pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)) * (network.calc_coeff(max(i-max_batch, 0), high=1.0, max_iter=1000))
 
-                mosaic_loss_target = (nt_cent(queue_data[1].detach(), F.softmax(mosaic_outputs_target_w, dim=1), queue_labels[1], 
-                    pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False) +
-                                     1.*nt_cent(queue_data_w[1].detach(), F.softmax(mosaic_outputs_target_s, dim=1), queue_labels[1], 
-                    pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)) * network.calc_coeff(i, high=0.3, max_iter=1000)
+            mosaic_loss_target = (nt_cent(queue_data[1].detach(), F.softmax(mosaic_outputs_target_w, dim=1), queue_labels[1], 
+                pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False) +
+                                    1.*nt_cent(queue_data_w[1].detach(), F.softmax(mosaic_outputs_target_s, dim=1), queue_labels[1], 
+                pseu_labels_target.float(), queue_weight, pre_ptr, class_level=False)) * network.calc_coeff(i, high=0.3, max_iter=50)
             mosaic_loss = mosaic_loss_target * 1.0
 
             # mosaic_loss = utils.cross_entropy_with_logits(mosaic_outputs_target, F.softmax(outputs_target*1.5, dim=1)) * (network.calc_coeff(i, high=0.5, max_iter=2000))
@@ -507,7 +516,7 @@ def train_distill(teacher, args):
 
         if i % print_interval == 0:
             log_str = 'step:{: d},\t,class_loss:{:.4f},\t,adv_loss:{:.4f}\t,mosaic_loss:{:.4f}\t,mean_prob:{:.4f}'.format(i, classifier_loss.item(),
-                                                        0.0, mosaic_loss_target.item(),prob_max.mean().item())
+                                                        adv_loss.item(), mosaic_loss_target.item(),prob_max.mean().item())
             print(log_str)
             args.log_file.write('\n'+log_str)
             args.log_file.flush()
